@@ -48,10 +48,12 @@ TextEditor::TextEditor()
 	, mIgnoreImGuiChild(false)
 	, mShowWhitespaces(true)
 	, mStartTime(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count())
+    , mEnableLineNumbers(false)
+    , mScrollToTopOnNewText(true)
+    , mTextFilter(nullptr)
 {
 	SetPalette(GetDarkPalette());
 	SetLanguageDefinition(LanguageDefinition::HLSL());
-	mLines.push_back(Line());
 }
 
 TextEditor::~TextEditor()
@@ -853,6 +855,24 @@ void TextEditor::HandleMouseInputs()
 
 void TextEditor::Render()
 {
+    Lines originalLines{};
+    bool originalLinesAltered{};
+    if (mTextFilter)
+    {
+        originalLines = mLines;
+        mLines.erase(std::remove_if(mLines.begin(), mLines.end(), [&](Line& line) -> bool {
+            if (mTextFilter && !mTextFilter->PassFilter(std::string{line.begin(), line.end()}.c_str()))
+            {
+                originalLinesAltered = true;
+                return true;
+            }
+            else
+            {
+                return false;
+            }
+        }), mLines.end());
+    }
+
 	/* Compute mCharAdvance regarding to scaled font size (Ctrl + mouse wheel)*/
 	const float fontSize = ImGui::GetFont()->CalcTextSizeA(ImGui::GetFontSize(), FLT_MAX, -1.0f, "#", nullptr, nullptr).x;
 	mCharAdvance = ImVec2(fontSize, ImGui::GetTextLineHeightWithSpacing() * mLineSpacing);
@@ -887,8 +907,11 @@ void TextEditor::Render()
 
 	// Deduce mTextStart by evaluating mLines size (global lineMax) plus two spaces as text width
 	char buf[16];
-	snprintf(buf, 16, " %d ", globalLineMax);
-	mTextStart = ImGui::GetFont()->CalcTextSizeA(ImGui::GetFontSize(), FLT_MAX, -1.0f, buf, nullptr, nullptr).x + mLeftMargin;
+	if (mEnableLineNumbers)
+    {
+        snprintf(buf, 16, " %d ", globalLineMax);
+        mTextStart = ImGui::GetFont()->CalcTextSizeA(ImGui::GetFontSize(), FLT_MAX, -1.0f, buf, nullptr, nullptr).x + mLeftMargin;
+    }
 
 	if (!mLines.empty())
 	{
@@ -955,11 +978,23 @@ void TextEditor::Render()
 				}
 			}
 
-			// Draw line number (right aligned)
-			snprintf(buf, 16, "%d  ", lineNo + 1);
+			// Draw line color markers
+			auto lineColorMarkerIt = mLineColorMarkers.find(lineNo + 1);
+			bool lineHasColorMarker = lineColorMarkerIt != mLineColorMarkers.end();
+			if (lineHasColorMarker)
+			{
+				auto end = ImVec2(lineStartScreenPos.x + contentSize.x + 2.0f * scrollX, lineStartScreenPos.y + mCharAdvance.y);
+				drawList->AddRectFilled(start, end, lineColorMarkerIt->second.first);
+			}
 
-			auto lineNoWidth = ImGui::GetFont()->CalcTextSizeA(ImGui::GetFontSize(), FLT_MAX, -1.0f, buf, nullptr, nullptr).x;
-			drawList->AddText(ImVec2(lineStartScreenPos.x + mTextStart - lineNoWidth, lineStartScreenPos.y), mPalette[(int)PaletteIndex::LineNumber], buf);
+			// Draw line number (right aligned)
+			if (mEnableLineNumbers)
+            {
+                snprintf(buf, 16, "%d  ", lineNo + 1);
+
+                auto lineNoWidth = ImGui::GetFont()->CalcTextSizeA(ImGui::GetFontSize(), FLT_MAX, -1.0f, buf, nullptr, nullptr).x;
+                drawList->AddText(ImVec2(lineStartScreenPos.x + mTextStart - lineNoWidth, lineStartScreenPos.y), mPalette[(int)PaletteIndex::LineNumber], buf);
+            }
 
 			if (mState.mCursorPosition.mLine == lineNo)
 			{
@@ -1016,7 +1051,7 @@ void TextEditor::Render()
 			for (int i = 0; i < line.size();)
 			{
 				auto& glyph = line[i];
-				auto color = GetGlyphColor(glyph);
+				auto color = lineHasColorMarker ? ImGui::ColorConvertFloat4ToU32(lineColorMarkerIt->second.second) : GetGlyphColor(glyph);
 
 				if ((color != prevColor || glyph.mChar == '\t' || glyph.mChar == ' ') && !mLineBuffer.empty())
 				{
@@ -1116,6 +1151,11 @@ void TextEditor::Render()
 		ImGui::SetWindowFocus();
 		mScrollToCursor = false;
 	}
+
+	if (originalLinesAltered)
+    {
+	    mLines = originalLines;
+    }
 }
 
 void TextEditor::Render(const char* aTitle, const ImVec2& aSize, bool aBorder)
@@ -1153,9 +1193,10 @@ void TextEditor::Render(const char* aTitle, const ImVec2& aSize, bool aBorder)
 	mWithinRender = false;
 }
 
-void TextEditor::SetText(const std::string & aText)
+void TextEditor::SetText(const std::string & aText, bool aOverrideExistingText)
 {
-	mLines.clear();
+    if (aOverrideExistingText)
+	    mLines.clear();
 	mLines.emplace_back(Line());
 	for (auto chr : aText)
 	{
@@ -1171,8 +1212,9 @@ void TextEditor::SetText(const std::string & aText)
 		}
 	}
 
-	mTextChanged = true;
-	mScrollToTop = true;
+    mTextChanged = true;
+	if (mScrollToTopOnNewText)
+        mScrollToTop = true;
 
 	mUndoBuffer.clear();
 	mUndoIndex = 0;
@@ -1200,10 +1242,11 @@ void TextEditor::SetTextLines(const std::vector<std::string> & aLines)
 			for (size_t j = 0; j < aLine.size(); ++j)
 				mLines[i].emplace_back(Glyph(aLine[j], PaletteIndex::Default));
 		}
-	}
+    }
 
-	mTextChanged = true;
-	mScrollToTop = true;
+    mTextChanged = true;
+	if (mScrollToTopOnNewText)
+        mScrollToTop = true;
 
 	mUndoBuffer.clear();
 	mUndoIndex = 0;
@@ -1402,6 +1445,15 @@ void TextEditor::SetCursorPosition(const Coordinates & aPosition)
 		mCursorPositionChanged = true;
 		EnsureCursorVisible();
 	}
+}
+
+void TextEditor::SetConsoleMode(bool aValue)
+{
+    SetEnableLineNumbers(!aValue);
+    SetDefaultTextStart(aValue ? 0.0f : 20.0f);
+    SetReadOnly(aValue);
+    SetShowWhitespaces(!aValue);
+    mScrollToTopOnNewText = !aValue;
 }
 
 void TextEditor::SetSelectionStart(const Coordinates & aPosition)
@@ -2007,7 +2059,7 @@ const TextEditor::Palette & TextEditor::GetDarkPalette()
 {
 	const static Palette p = { {
 			0xff7f7f7f,	// Default
-			0xffd69c56,	// Keyword	
+			0xffd69c56,	// Keyword
 			0xff00ff00,	// Number
 			0xff7070e0,	// String
 			0xff70a0e0, // Char literal
@@ -2035,7 +2087,7 @@ const TextEditor::Palette & TextEditor::GetLightPalette()
 {
 	const static Palette p = { {
 			0xff7f7f7f,	// None
-			0xffff0c06,	// Keyword	
+			0xffff0c06,	// Keyword
 			0xff008000,	// Number
 			0xff2020a0,	// String
 			0xff304070, // Char literal
@@ -2063,7 +2115,7 @@ const TextEditor::Palette & TextEditor::GetRetroBluePalette()
 {
 	const static Palette p = { {
 			0xff00ffff,	// None
-			0xffffff00,	// Keyword	
+			0xffffff00,	// Keyword
 			0xff00ff00,	// Number
 			0xff808000,	// String
 			0xff808000, // Char literal
@@ -2112,6 +2164,11 @@ std::vector<std::string> TextEditor::GetTextLines() const
 	}
 
 	return result;
+}
+
+void TextEditor::AddTextLine(const std::string & aText)
+{
+    SetText(aText, false);
 }
 
 std::string TextEditor::GetSelectedText() const

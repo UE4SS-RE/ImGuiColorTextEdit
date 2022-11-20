@@ -129,6 +129,7 @@ public:
 	typedef std::unordered_map<std::string, Identifier> Identifiers;
 	typedef std::unordered_set<std::string> Keywords;
 	typedef std::map<int, std::string> ErrorMarkers;
+	typedef std::map<int, std::pair<ImColor, ImColor>> LineColorMarkers;
 	typedef std::unordered_set<int> Breakpoints;
 	typedef std::array<ImU32, (unsigned)PaletteIndex::Max> Palette;
 	typedef uint8_t Char;
@@ -143,6 +144,8 @@ public:
 
 		Glyph(Char aChar, PaletteIndex aColorIndex) : mChar(aChar), mColorIndex(aColorIndex),
 			mComment(false), mMultiLineComment(false), mPreprocessor(false) {}
+
+        operator char() const { return mChar; }
 	};
 
 	typedef std::vector<Glyph> Line;
@@ -191,15 +194,22 @@ public:
 	const Palette& GetPalette() const { return mPaletteBase; }
 	void SetPalette(const Palette& aValue);
 
+	ErrorMarkers& GetErrorMarkers() { return mErrorMarkers; }
 	void SetErrorMarkers(const ErrorMarkers& aMarkers) { mErrorMarkers = aMarkers; }
 	void SetBreakpoints(const Breakpoints& aMarkers) { mBreakpoints = aMarkers; }
 
 	void Render(const char* aTitle, const ImVec2& aSize = ImVec2(), bool aBorder = false);
-	void SetText(const std::string& aText);
+	void SetText(const std::string& aText, bool aOverrideExistingText = true);
 	std::string GetText() const;
 
 	void SetTextLines(const std::vector<std::string>& aLines);
 	std::vector<std::string> GetTextLines() const;
+
+	void AddTextLine(const std::string& aText);
+
+	void ClearLines() { mLines.clear(); };
+
+	LineColorMarkers& GetLineColorMarkers() { return mLineColorMarkers; }
 
 	std::string GetSelectedText() const;
 	std::string GetCurrentLineText()const;
@@ -229,6 +239,15 @@ public:
 
 	inline void SetShowWhitespaces(bool aValue) { mShowWhitespaces = aValue; }
 	inline bool IsShowingWhitespaces() const { return mShowWhitespaces; }
+
+	void SetConsoleMode(bool aValue);
+
+	inline void SetTextFilter(ImGuiTextFilter* aValue) { mTextFilter = aValue; }
+
+	inline void SetEnableLineNumbers(bool aValue) { mEnableLineNumbers = aValue; }
+	inline bool IsLineNumbersEnabled() const { return mEnableLineNumbers; }
+
+	inline void SetDefaultTextStart(float aValue) { mTextStart = aValue; }
 
 	void SetTabSize(int aValue);
 	inline int GetTabSize() const { return mTabSize; }
@@ -386,4 +405,9 @@ private:
 	uint64_t mStartTime;
 
 	float mLastClick;
+
+	bool mEnableLineNumbers;
+	bool mScrollToTopOnNewText;
+	ImGuiTextFilter* mTextFilter;
+	LineColorMarkers  mLineColorMarkers;
 };
